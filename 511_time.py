@@ -6,6 +6,71 @@ import time
 import argparse
 import readline
 import pprint
+import sys
+
+if sys.platform == "darwin":
+    import Foundation
+    from Foundation import NSUserNotification, NSUserNotificationCenter
+    from PyObjCTools import AppHelper
+
+    # TBD: Add windows/linux support
+    class OSNotification(Foundation.NSObject):
+        # Based on http://stackoverflow.com/questions/12202983/working-with-mountain-lions-notification-center-using-pyobjc
+
+        def clearNotifications(self):
+            """Clear any displayed alerts we have posted. Requires Mavericks."""
+
+            NSUserNotificationCenter.defaultUserNotificationCenter().removeAllDeliveredNotifications()
+
+        def notify(self, title, subtitle, text):
+            """Create a user notification and display it."""
+
+             # if appImage:
+             #    source_img = AppKit.NSImage.alloc().initByReferencingFile_(appImage)
+             #    notification.set_identityImage_(source_img)
+             # if contentImage:
+             #    source_img = AppKit.NSImage.alloc().initBy
+            #     notification.setContentImage_(source_img)
+
+            notification = NSUserNotification.alloc().init()
+            notification.setTitle_(str(title))
+            notification.setSubtitle_(str(subtitle))
+            notification.setInformativeText_(str(text))
+            notification.setSoundName_("NSUserNotificationDefaultSoundName")
+
+            # notification.set_showsButtons_(True)
+            # notification.setHasActionButton_(True)
+            # notification.setHasReplyButton_ (True) # this will allow the user to enter text to "reply"
+            # notification.setActionButtonTitle_("View")
+            # notification.setUserInfo_({"action":"open_url", "value":url})
+
+            NSUserNotificationCenter.defaultUserNotificationCenter().setDelegate_(self)
+            NSUserNotificationCenter.defaultUserNotificationCenter().scheduleNotification_(notification)
+
+            # Note that the notification center saves a *copy* of our object.
+            AppHelper.runConsoleEventLoop()
+
+        def userNotificationCenter_didDeliverNotification_(self, center, notification):
+            AppHelper.stopEventLoop()
+
+        # We'll get this if the user clicked on the notification.
+        def userNotificationCenter_didActivateNotification_(self, center, notification):
+            # this is for "reply" button
+            #response = notification.response().string()
+
+            #userInfo = notification.userInfo()
+            # if userInfo["action"] == "open_url":
+            pass
+
+    def notify(title, subtitle, text):
+        n = OSNotification.alloc().init()
+        n.notify(title, subtitle, text)
+
+else:
+    # TODO: Add windows "action" center support, look @ https://github.com/Tzbob/python-windows-tiler/blob/master/pwt/notifyicon.py
+    def notify(title, subtitle, text):
+        print(title, ":", subtitle)
+        print(text)
 
 if 'libedit' in readline.__doc__:
     readline.parse_and_bind("bind -e")
@@ -44,8 +109,9 @@ def main():
     parser = argparse.ArgumentParser(description='Script which periodically checks the minimum time between two points')
     parser.add_argument("-token", required=True, help="511.org API token")
     parser.add_argument("-period", type=int, default=60, help="Number of seconds between refreshes")
+    parser.add_argument("-travel_min", type=int, default=40, help="Minimum number of minutes for route until notification")
     parser.add_argument("-origin", help="origin, ex: San Carlos/US-101 S/HOLLY ST")
-    parser.add_argument("-dest", help="destination, ex: San Jose/US-101 S/HOLLY ST")
+    parser.add_argument("-dest", help="destination, ex: San Jose/CA-87 S/W CAPITOL EXPY")
     parser.add_argument("-verbose", action='store_true', help="Verbose Output")
     app_args = parser.parse_args()
 
@@ -97,19 +163,19 @@ def main():
     if "d" not in dest_obj:
         raise Exception("Unable to find destination")
 
-    last_time = 0
     while True:
         paths = requests.get('http://services.my511.org/traffic/getpathlist.aspx', params=dest_obj)
         assert paths.status_code == 200
         paths = xmltodict.parse(paths.text)
         paths = paths["paths"]["path"]
 
-        times = list(map(lambda x: x["currentTravelTime"], paths))
+        times = list(map(lambda x: int(x["currentTravelTime"]), paths))
         min_time = min(times)
 
-        if min_time != last_time:
-            print("current travel time:", min_time, "m")
-            last_time = min_time
+        if min_time <= app_args.travel_min:
+            text = "Current minimum travel time " + str(min_time) + " minutes" # + "" from: \n" + "/".join(app_args.origin) + " to: " + "/".join(app_args.dest)
+            notify("511 time", "Target Travel Time Reached!", text)
+            exit(0)
 
         time.sleep(app_args.period)
 
